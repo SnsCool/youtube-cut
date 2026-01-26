@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube切り抜き動画生成</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 700px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 { font-size: 2rem; margin-bottom: 10px; color: #333; }
+        .subtitle { color: #666; margin-bottom: 30px; }
+        .input-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        input[type="text"] {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus { outline: none; border-color: #667eea; }
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        button.secondary {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+        #result {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            display: none;
+        }
+        .loading { text-align: center; padding: 20px; }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .error { color: #dc3545; background: #f8d7da; padding: 15px; border-radius: 10px; margin-top: 20px; }
+        .success { color: #155724; background: #d4edda; padding: 15px; border-radius: 10px; }
+        .peaks { margin-top: 20px; }
+        .peak-item {
+            background: white;
+            padding: 15px;
+            margin: 8px 0;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .peak-info { flex: 1; }
+        .peak-btn {
+            padding: 8px 16px;
+            font-size: 14px;
+            width: auto;
+            margin: 0;
+        }
+        .peak-btn.generating {
+            background: #ccc;
+        }
+        .note { margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 10px; color: #856404; font-size: 14px; }
+        .github-link { margin-top: 20px; text-align: center; }
+        .github-link a { color: #667eea; text-decoration: none; }
+        .github-link a:hover { text-decoration: underline; }
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+        .download-link {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 10px 20px;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+        }
+        .download-link:hover { background: #218838; }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .status-badge.processing { background: #ffc107; color: #000; }
+        .status-badge.completed { background: #28a745; color: #fff; }
+        .status-badge.failed { background: #dc3545; color: #fff; }
+        .backend-status {
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .backend-status.online { background: #d4edda; color: #155724; }
+        .backend-status.offline { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 YouTube切り抜き動画生成</h1>
+        <p class="subtitle">YouTube動画の盛り上がりポイントを自動検出 & クリップ生成</p>
+
+        <div id="backendStatus" class="backend-status">
+            🔄 バックエンド接続確認中...
+        </div>
+
+        <div class="input-group">
+            <label for="url">YouTube URL</label>
+            <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=...">
+        </div>
+
+        <button onclick="analyze()" id="btn">🔍 盛り上がりポイントを検出</button>
+
+        <div id="result"></div>
+
+        <div class="note">
+            <strong>📝 使い方:</strong><br>
+            1. YouTube URLを入力<br>
+            2. 盛り上がりポイントを検出<br>
+            3. 「クリップ生成」ボタンで動画を作成<br>
+            4. ダウンロードリンクから動画を取得
+        </div>
+
+        <div class="github-link">
+            <a href="https://github.com/hatakiyoto/youtube-cut" target="_blank">📦 GitHub Repository</a>
+        </div>
+    </div>
+
+    <script>
+        // Backend URL - Railway deployment
+        const BACKEND_URL = localStorage.getItem('backendUrl') || '';
+
+        // Check backend status on load
+        window.onload = async function() {
+            const statusEl = document.getElementById('backendStatus');
+            if (!BACKEND_URL) {
+                statusEl.className = 'backend-status offline';
+                statusEl.innerHTML = '⚠️ バックエンド未設定 - 盛り上がり検出のみ利用可能<br><small>クリップ生成には<a href="#" onclick="setBackendUrl()">バックエンドURLを設定</a>してください</small>';
+                return;
+            }
+
+            try {
+                const res = await fetch(BACKEND_URL + '/health', { timeout: 5000 });
+                if (res.ok) {
+                    statusEl.className = 'backend-status online';
+                    statusEl.innerHTML = '✅ バックエンド接続OK - クリップ生成可能';
+                } else {
+                    throw new Error('Not healthy');
+                }
+            } catch (e) {
+                statusEl.className = 'backend-status offline';
+                statusEl.innerHTML = '⚠️ バックエンド接続失敗 - 盛り上がり検出のみ利用可能<br><small><a href="#" onclick="setBackendUrl()">バックエンドURLを再設定</a></small>';
+            }
+        };
+
+        function setBackendUrl() {
+            const url = prompt('RailwayバックエンドのURLを入力してください:', BACKEND_URL);
+            if (url !== null) {
+                localStorage.setItem('backendUrl', url.replace(/\/$/, ''));
+                location.reload();
+            }
+        }
+
+        async function analyze() {
+            const url = document.getElementById('url').value;
+            const btn = document.getElementById('btn');
+            const result = document.getElementById('result');
+
+            if (!url) {
+                alert('URLを入力してください');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '🔄 分析中...';
+            result.style.display = 'block';
+            result.innerHTML = '<div class="loading"><div class="spinner"></div><p>Heatmapデータを取得中...</p></div>';
+
+            try {
+                const response = await fetch('/api/analyze?url=' + encodeURIComponent(url));
+                const data = await response.json();
+
+                if (data.error) {
+                    result.innerHTML = '<div class="error">❌ ' + data.error + '</div>';
+                } else {
+                    let html = '<div class="success">✅ ' + data.peaks.length + '件の盛り上がりポイントを検出しました</div>';
+                    html += '<div class="peaks"><h3>🔥 盛り上がりポイント</h3>';
+
+                    data.peaks.forEach((peak, i) => {
+                        const canGenerate = BACKEND_URL ? '' : 'disabled title="バックエンドURLを設定してください"';
+                        html += `
+                            <div class="peak-item" id="peak-${i}">
+                                <div class="peak-info">
+                                    <strong>${i+1}. ${peak.time_range}</strong> (スコア: ${peak.score.toFixed(2)})
+                                </div>
+                                <button class="peak-btn secondary" onclick="generateClip('${url}', ${peak.start}, ${peak.end}, ${i})" ${canGenerate}>
+                                    ✂️ クリップ生成
+                                </button>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    result.innerHTML = html;
+                }
+            } catch (e) {
+                result.innerHTML = '<div class="error">❌ エラー: ' + e.message + '</div>';
+            }
+
+            btn.disabled = false;
+            btn.textContent = '🔍 盛り上がりポイントを検出';
+        }
+
+        async function generateClip(videoUrl, start, end, index) {
+            if (!BACKEND_URL) {
+                alert('バックエンドURLを設定してください');
+                setBackendUrl();
+                return;
+            }
+
+            const peakEl = document.getElementById('peak-' + index);
+            const btn = peakEl.querySelector('.peak-btn');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ 生成中...';
+            btn.className = 'peak-btn generating';
+
+            // Add progress bar
+            let progressHtml = `
+                <div class="progress-container" id="progress-${index}">
+                    <div class="progress-bar"><div class="progress-fill" style="width: 0%"></div></div>
+                    <small>動画をダウンロード中...</small>
+                </div>
+            `;
+            peakEl.insertAdjacentHTML('beforeend', progressHtml);
+
+            try {
+                const response = await fetch(BACKEND_URL + '/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: videoUrl,
+                        start: start,
+                        end: end
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'completed') {
+                    const progressEl = document.getElementById('progress-' + index);
+                    progressEl.innerHTML = `
+                        <a href="${BACKEND_URL}${data.download_url}" class="download-link" target="_blank">
+                            📥 ダウンロード (${(data.file_size / 1024 / 1024).toFixed(1)} MB)
+                        </a>
+                    `;
+                    btn.textContent = '✅ 完了';
+                    btn.className = 'peak-btn';
+                } else {
+                    throw new Error(data.detail || 'Generation failed');
+                }
+            } catch (e) {
+                const progressEl = document.getElementById('progress-' + index);
+                if (progressEl) {
+                    progressEl.innerHTML = `<div class="error">❌ ${e.message}</div>`;
+                }
+                btn.textContent = '🔄 再試行';
+                btn.className = 'peak-btn secondary';
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
