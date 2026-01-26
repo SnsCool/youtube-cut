@@ -1,6 +1,5 @@
 FROM python:3.11-slim
 
-# Force rebuild v2 - removed heavy whisper dependencies
 # Install FFmpeg and dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
@@ -10,9 +9,12 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install
+# Cache bust argument - change this to force rebuild
+ARG CACHE_BUST=v3_no_whisper
+
+# Copy requirements and install (without whisper)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && echo $CACHE_BUST
 
 # Copy application code
 COPY . .
