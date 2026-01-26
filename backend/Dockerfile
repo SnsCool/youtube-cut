@@ -1,5 +1,6 @@
 FROM python:3.11-slim
 
+# Force rebuild v2 - removed heavy whisper dependencies
 # Install FFmpeg and dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
