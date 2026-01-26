@@ -313,3 +313,9 @@ async def cleanup_old_files():
     for file in OUTPUT_DIR.glob("*.mp4"):
         if time.time() - file.stat().st_mtime > 3600:  # 1 hour
             file.unlink()
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
