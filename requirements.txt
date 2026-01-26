@@ -1,7 +1,0 @@
-streamlit==1.53.1
-yt-dlp==2025.12.8
-openai==2.15.0
-httpx==0.28.1
-rich==14.2.0
-typer==0.21.1
-faster-whisper==1.1.1
