@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-yt-dlp
+yt-dlp>=2024.12.0
 python-multipart
 aiofiles
 httpx

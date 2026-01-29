@@ -216,13 +216,27 @@ def transcribe_audio(audio_path: str) -> list:
             )
 
         segments = []
-        if hasattr(transcription, 'segments') and transcription.segments:
-            for seg in transcription.segments:
-                segments.append({
-                    "start": seg.start,
-                    "end": seg.end,
-                    "text": seg.text.strip() if seg.text else ""
-                })
+        # Handle both object and dict response formats
+        raw_segments = None
+        if hasattr(transcription, 'segments'):
+            raw_segments = transcription.segments
+        elif isinstance(transcription, dict) and 'segments' in transcription:
+            raw_segments = transcription['segments']
+
+        if raw_segments:
+            for seg in raw_segments:
+                if isinstance(seg, dict):
+                    segments.append({
+                        "start": seg.get("start", 0),
+                        "end": seg.get("end", 0),
+                        "text": seg.get("text", "").strip()
+                    })
+                else:
+                    segments.append({
+                        "start": seg.start,
+                        "end": seg.end,
+                        "text": seg.text.strip() if seg.text else ""
+                    })
         return segments
     except Exception as e:
         print(f"Transcription error: {e}")
@@ -428,11 +442,14 @@ def generate_clip(request: GenerateRequest):
 
             # yt-dlp download
             ydl_opts = {
-                'format': '18/22/best',
+                'format': 'best[height<=720]/best',
                 'outtmpl': video_path,
                 'quiet': True,
                 'no_warnings': True,
-                'extractor_args': {'youtube': {'player_client': ['android']}},
+                'extractor_args': {'youtube': {'player_client': ['ios', 'web']}},
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+                },
             }
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -492,11 +509,14 @@ def generate_hook_first(request: HookFirstRequest):
             jobs[job_id]["progress"] = 10
 
             ydl_opts = {
-                'format': '18/22/best',
+                'format': 'best[ext=mp4][height<=720]/best[ext=mp4]/best',
                 'outtmpl': video_path,
                 'quiet': True,
                 'no_warnings': True,
-                'extractor_args': {'youtube': {'player_client': ['android']}},
+                'extractor_args': {'youtube': {'player_client': ['ios', 'web']}},
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+                },
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
