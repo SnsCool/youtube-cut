@@ -35,6 +35,45 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # ジョブ状態管理
 jobs = {}
 
+# PO Token Server URL (for YouTube bot detection bypass)
+POT_SERVER_URL = os.environ.get("POT_SERVER_URL", "")
+
+
+def get_ydl_opts(video_path: str) -> dict:
+    """Get yt-dlp options with PO Token support"""
+    opts = {
+        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+        'outtmpl': video_path.replace('.mp4', '.%(ext)s'),
+        'merge_output_format': 'mp4',
+        'quiet': True,
+        'no_warnings': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+        },
+        'socket_timeout': 30,
+        'retries': 3,
+    }
+
+    # PO Token Server が設定されている場合
+    if POT_SERVER_URL:
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['mweb'],
+            },
+            'youtubepot-bgutilhttp': {
+                'base_url': POT_SERVER_URL,
+            }
+        }
+    else:
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['mweb', 'android']
+            }
+        }
+
+    return opts
+
+
 # Groq client（遅延読み込み）
 _groq_client = None
 
@@ -424,6 +463,173 @@ def analyze(request: AnalyzeRequest):
     return {"peaks": result}
 
 
+def analyze_peaks_with_llm(segments: list, video_duration: float = None) -> list:
+    """Use LLM to analyze transcript and find peak moments"""
+    client = get_groq_client()
+
+    if not client or not segments:
+        return []
+
+    # セグメントをテキストに変換（時間情報付き）
+    transcript_with_time = []
+    for seg in segments:
+        minutes = int(seg["start"] // 60)
+        seconds = int(seg["start"] % 60)
+        transcript_with_time.append(f"[{minutes:02d}:{seconds:02d}] {seg['text']}")
+
+    full_transcript = "\n".join(transcript_with_time)
+
+    # トランスクリプトが長すぎる場合は分割
+    if len(full_transcript) > 8000:
+        full_transcript = full_transcript[:8000] + "\n...(省略)"
+
+    prompt = f"""以下はYouTube動画の文字起こしです。視聴者が最も興味を持つであろう「盛り上がりポイント」を5つ以内で特定してください。
+
+【文字起こし】
+{full_transcript}
+
+【盛り上がりポイントの判断基準】
+1. 感情的な反応（驚き、笑い、怒り、感動）
+2. 重要な発表や決定の瞬間
+3. 議論が白熱している部分
+4. 予想外の展開
+5. 印象的なセリフや名言
+
+JSON形式で回答してください:
+{{
+    "peaks": [
+        {{
+            "start_time": "MM:SS形式",
+            "end_time": "MM:SS形式",
+            "reason": "なぜ盛り上がりポイントなのか",
+            "score": 0.0-1.0の数値（盛り上がり度）
+        }}
+    ]
+}}
+
+注意:
+- 必ず有効なJSONで回答してください
+- start_timeとend_timeは文字起こしの時間に基づいてください
+- 各ピークは10-60秒程度の範囲にしてください"""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=1500
+        )
+
+        result_text = response.choices[0].message.content
+
+        # JSONを抽出
+        json_match = re.search(r'\{[\s\S]*\}', result_text)
+        if json_match:
+            data = json.loads(json_match.group())
+            peaks = data.get("peaks", [])
+
+            # 時間をパースして秒に変換
+            parsed_peaks = []
+            for p in peaks:
+                try:
+                    start_parts = p["start_time"].split(":")
+                    end_parts = p["end_time"].split(":")
+
+                    start_sec = int(start_parts[0]) * 60 + int(start_parts[1])
+                    end_sec = int(end_parts[0]) * 60 + int(end_parts[1])
+
+                    # 最低10秒の長さを確保
+                    if end_sec - start_sec < 10:
+                        end_sec = start_sec + 30
+
+                    parsed_peaks.append({
+                        "start": start_sec,
+                        "end": end_sec,
+                        "score": float(p.get("score", 0.7)),
+                        "reason": p.get("reason", "")
+                    })
+                except (ValueError, KeyError):
+                    continue
+
+            # スコア順にソート
+            parsed_peaks.sort(key=lambda x: x["score"], reverse=True)
+            return parsed_peaks[:5]
+
+        return []
+
+    except Exception as e:
+        print(f"LLM analysis error: {e}")
+        return []
+
+
+@app.post("/analyze-ai")
+def analyze_with_ai(request: AnalyzeRequest):
+    """Analyze YouTube video using AI (for videos without heatmap)"""
+    video_id = extract_video_id(request.url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+
+    client = get_groq_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="Groq API key not configured")
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_path = os.path.join(tmpdir, "video.mp4")
+            audio_path = os.path.join(tmpdir, "audio.wav")
+
+            # 1. Download video
+            ydl_opts = get_ydl_opts(video_path)
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+
+            # ダウンロードされたファイルを探す
+            import glob
+            downloaded_files = glob.glob(os.path.join(tmpdir, "video.*"))
+            if downloaded_files:
+                video_path = downloaded_files[0]
+
+            # 2. Extract audio
+            extract_audio(video_path, audio_path)
+
+            # 3. Transcribe
+            segments = transcribe_audio(audio_path)
+
+            if not segments:
+                raise HTTPException(status_code=500, detail="Transcription failed")
+
+            # 4. Analyze with LLM
+            peaks = analyze_peaks_with_llm(segments)
+
+            if not peaks:
+                raise HTTPException(status_code=404, detail="No peaks found by AI analysis")
+
+            # フォーマットを/analyzeと同じ形式に
+            result = []
+            for p in peaks:
+                start_min = int(p["start"] // 60)
+                start_sec = int(p["start"] % 60)
+                end_min = int(p["end"] // 60)
+                end_sec = int(p["end"] % 60)
+
+                result.append({
+                    "time_range": f"{start_min:02d}:{start_sec:02d} - {end_min:02d}:{end_sec:02d}",
+                    "score": p["score"],
+                    "start": p["start"],
+                    "end": p["end"],
+                    "reason": p.get("reason", ""),
+                    "source": "ai"
+                })
+
+            return {"peaks": result, "source": "ai"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/generate")
 def generate_clip(request: GenerateRequest):
     """Generate a simple clip from YouTube video"""
@@ -441,19 +647,15 @@ def generate_clip(request: GenerateRequest):
             video_path = os.path.join(tmpdir, "video.mp4")
 
             # yt-dlp download
-            ydl_opts = {
-                'format': 'best[height<=720]/best',
-                'outtmpl': video_path,
-                'quiet': True,
-                'no_warnings': True,
-                'extractor_args': {'youtube': {'player_client': ['ios', 'web']}},
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
-                },
-            }
+            ydl_opts = get_ydl_opts(video_path)
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+                # ダウンロードされたファイルを探す
+                import glob
+                downloaded_files = glob.glob(os.path.join(tmpdir, "video.*"))
+                if downloaded_files:
+                    video_path = downloaded_files[0]
             except Exception as e:
                 raise Exception(f"Download failed: {str(e)}")
 
@@ -508,18 +710,15 @@ def generate_hook_first(request: HookFirstRequest):
             jobs[job_id]["step"] = "downloading"
             jobs[job_id]["progress"] = 10
 
-            ydl_opts = {
-                'format': 'best[ext=mp4][height<=720]/best[ext=mp4]/best',
-                'outtmpl': video_path,
-                'quiet': True,
-                'no_warnings': True,
-                'extractor_args': {'youtube': {'player_client': ['ios', 'web']}},
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
-                },
-            }
+            ydl_opts = get_ydl_opts(video_path)
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+
+            # ダウンロードされたファイルを探す
+            import glob
+            downloaded_files = glob.glob(os.path.join(tmpdir, "video.*"))
+            if downloaded_files:
+                video_path = downloaded_files[0]
 
             # 2. Extract audio and transcribe
             jobs[job_id]["step"] = "transcribing"
