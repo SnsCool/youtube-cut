@@ -74,7 +74,29 @@
       "Bash(railway redeploy:*)",
       "Bash(railway up:*)",
       "Bash(node:*)",
-      "Bash(railway deployment list:*)"
+      "Bash(railway deployment list:*)",
+      "Bash(gh api:*)",
+      "Bash(railway deploy:*)",
+      "Bash(railway variable list:*)",
+      "Bash(gh secret list:*)",
+      "Bash(railway variable set:*)",
+      "Bash(vercel ls:*)",
+      "Bash(vercel whoami:*)",
+      "Bash(railway:*)",
+      "WebFetch(domain:railway.com)",
+      "Bash(vercel --version:*)",
+      "WebFetch(domain:yutura.net)",
+      "WebFetch(domain:note.com)",
+      "Bash(sort:*)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:ciatr.jp)",
+      "Bash(__NEW_LINE_3a848920cd9a065c__ echo -e \"\\\\n\\\\n=== Test 2: 令和の虎 \\(heatmap video\\) ===\")",
+      "Bash(__NEW_LINE_f42f8a8bd9c4813d__ echo -e \"\\\\n\\\\n=== Test 3: 令和の虎 \\(user''s video\\) ===\")",
+      "Bash(pip3 index:*)",
+      "Bash(pip3 install:*)",
+      "Bash(git revert:*)",
+      "Bash(git fetch:*)",
+      "Bash(pip3 show:*)"
     ]
   }
 }

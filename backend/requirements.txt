@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 yt-dlp>=2025.5.22
-bgutil-ytdlp-pot-provider
+bgutil-ytdlp-pot-provider>=1.2.0
 python-multipart
 aiofiles
 httpx

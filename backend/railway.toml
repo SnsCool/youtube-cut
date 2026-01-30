@@ -4,5 +4,6 @@ dockerfilePath = "Dockerfile"
 watchPatterns = ["**/*"]
 
 [deploy]
+startCommand = "python app.py"
 healthcheckPath = "/health"
-healthcheckTimeout = 60
+healthcheckTimeout = 120

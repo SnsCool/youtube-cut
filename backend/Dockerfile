@@ -13,7 +13,15 @@ WORKDIR /app
 
 # Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    echo "=== Installed packages ===" && pip list | grep -E "(yt-dlp|bgutil)" && \
+    echo "=== yt-dlp version ===" && python -c "import yt_dlp; print(yt_dlp.version.__version__)" && \
+    # Ensure __init__.py files exist for plugin discovery
+    touch /usr/local/lib/python3.11/site-packages/yt_dlp_plugins/__init__.py && \
+    touch /usr/local/lib/python3.11/site-packages/yt_dlp_plugins/extractor/__init__.py && \
+    echo "=== Plugin directory contents ===" && \
+    ls -la /usr/local/lib/python3.11/site-packages/yt_dlp_plugins/ && \
+    ls -la /usr/local/lib/python3.11/site-packages/yt_dlp_plugins/extractor/
 
 # Copy application
 COPY . .
@@ -25,7 +33,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 EXPOSE 8000
 
 # Use PORT from environment (Railway sets this)
-# Using shell form to ensure $PORT is evaluated
-CMD ["sh", "-c", "python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "echo Starting app... && python app.py"]
 
 # Deploy trigger 1769779123

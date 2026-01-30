@@ -569,6 +569,7 @@ def debug_pot():
     """Debug PO Token server connectivity and yt-dlp configuration"""
     import urllib.request
     import urllib.error
+    import importlib.metadata
 
     result = {
         "pot_server_url": POT_SERVER_URL,
@@ -578,16 +579,59 @@ def debug_pot():
         "yt_dlp_version": yt_dlp.version.__version__,
         "pot_plugin_loaded": False,
         "pot_token_test": None,
-        "error": None
+        "error": None,
+        "bgutil_package_installed": False,
+        "bgutil_package_version": None,
+        "yt_dlp_plugins": []
     }
+
+    # Check if bgutil package is installed
+    try:
+        version = importlib.metadata.version("bgutil-ytdlp-pot-provider")
+        result["bgutil_package_installed"] = True
+        result["bgutil_package_version"] = version
+    except importlib.metadata.PackageNotFoundError:
+        result["bgutil_package_installed"] = False
+
+    # Check yt-dlp plugins
+    try:
+        from yt_dlp.plugins import PACKAGE_NAME, directories, load_plugins
+        result["yt_dlp_plugin_dirs"] = directories()
+        # List files in plugin directories
+        for plugin_dir in result["yt_dlp_plugin_dirs"]:
+            try:
+                import glob
+                files = glob.glob(f"{plugin_dir}/**/*.py", recursive=True)
+                result["plugin_files"] = files[:20]  # First 20 files
+            except:
+                pass
+        # Try to list loaded plugins
+        try:
+            from yt_dlp import YoutubeDL
+            ydl = YoutubeDL({'quiet': True})
+            if hasattr(ydl, '_plugin_specs'):
+                result["yt_dlp_plugins"] = list(ydl._plugin_specs.keys())
+        except:
+            pass
+    except Exception as e:
+        result["plugin_check_error"] = str(e)
 
     # Check if bgutil plugin is loaded
     try:
         from yt_dlp.extractor.youtube import YoutubeIE
-        # Check for PO Token provider in extractor
         result["pot_plugin_loaded"] = hasattr(YoutubeIE, '_pot_providers') or 'bgutil' in str(dir(YoutubeIE))
     except Exception as e:
         result["pot_plugin_error"] = str(e)
+
+    # Try to directly import the plugin
+    try:
+        import sys
+        sys.path.insert(0, '/usr/local/lib/python3.11/site-packages/yt_dlp_plugins/extractor')
+        import getpot_bgutil_http
+        result["direct_import"] = "success"
+        result["plugin_classes"] = [c for c in dir(getpot_bgutil_http) if not c.startswith('_')]
+    except Exception as e:
+        result["direct_import"] = f"error: {str(e)}"
 
     if POT_SERVER_URL:
         # Test GET on root
