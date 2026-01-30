@@ -646,22 +646,22 @@ def debug_pot():
         except Exception as e:
             result["error"] = str(e)
 
-        # Test POST to /get_pot endpoint (common endpoint pattern)
+        # Test POST to /get_pot endpoint with new API (content_binding)
         try:
-            test_data = json.dumps({"video_id": "test", "data_sync_id": "test"}).encode()
+            test_data = json.dumps({"video_id": "dQw4w9WgXcQ", "content_binding": "test"}).encode()
             req = urllib.request.Request(
                 f"{POT_SERVER_URL}/get_pot",
                 data=test_data,
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=30) as response:
                 result["pot_token_test"] = "success"
-                result["pot_token_response"] = response.read().decode()[:200]
+                result["pot_token_response"] = response.read().decode()[:500]
         except urllib.error.HTTPError as e:
             result["pot_token_test"] = f"HTTP {e.code}"
             try:
-                result["pot_token_response"] = e.read().decode()[:200]
+                result["pot_token_response"] = e.read().decode()[:500]
             except:
                 pass
         except Exception as e:
