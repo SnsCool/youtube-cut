@@ -556,7 +556,7 @@ def concatenate_videos(video_paths: list, output_path: str):
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "YouTube Clip Generator API with Hook-First"}
+    return {"status": "ok", "service": "YouTube Clip Generator API with Hook-First", "version": "2.1.0"}
 
 
 @app.get("/health")
