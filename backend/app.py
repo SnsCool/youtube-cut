@@ -566,7 +566,7 @@ def health():
 
 @app.get("/debug/pot")
 def debug_pot():
-    """Debug PO Token server connectivity"""
+    """Debug PO Token server connectivity and yt-dlp configuration"""
     import urllib.request
     import urllib.error
 
@@ -575,25 +575,106 @@ def debug_pot():
         "bgutil_env": os.environ.get("BGUTIL_POT_HTTP_BASE_URL", "not set"),
         "pot_server_reachable": False,
         "pot_server_response": None,
+        "yt_dlp_version": yt_dlp.version.__version__,
+        "pot_plugin_loaded": False,
+        "pot_token_test": None,
         "error": None
     }
 
+    # Check if bgutil plugin is loaded
+    try:
+        from yt_dlp.extractor.youtube import YoutubeIE
+        # Check for PO Token provider in extractor
+        result["pot_plugin_loaded"] = hasattr(YoutubeIE, '_pot_providers') or 'bgutil' in str(dir(YoutubeIE))
+    except Exception as e:
+        result["pot_plugin_error"] = str(e)
+
     if POT_SERVER_URL:
+        # Test GET on root
         try:
-            # Test connectivity to PO Token server
-            req = urllib.request.Request(
-                f"{POT_SERVER_URL}/",
-                method="GET"
-            )
+            req = urllib.request.Request(f"{POT_SERVER_URL}/", method="GET")
             with urllib.request.urlopen(req, timeout=10) as response:
                 result["pot_server_reachable"] = True
                 result["pot_server_response"] = response.status
         except urllib.error.HTTPError as e:
-            result["pot_server_reachable"] = True  # Server responded, just with error
+            result["pot_server_reachable"] = True
             result["pot_server_response"] = e.code
-            result["error"] = str(e)
         except Exception as e:
             result["error"] = str(e)
+
+        # Test POST to /get_pot endpoint (common endpoint pattern)
+        try:
+            test_data = json.dumps({"video_id": "test", "data_sync_id": "test"}).encode()
+            req = urllib.request.Request(
+                f"{POT_SERVER_URL}/get_pot",
+                data=test_data,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                result["pot_token_test"] = "success"
+                result["pot_token_response"] = response.read().decode()[:200]
+        except urllib.error.HTTPError as e:
+            result["pot_token_test"] = f"HTTP {e.code}"
+            try:
+                result["pot_token_response"] = e.read().decode()[:200]
+            except:
+                pass
+        except Exception as e:
+            result["pot_token_test"] = f"error: {str(e)}"
+
+    return result
+
+
+@app.get("/debug/test-download/{video_id}")
+def debug_test_download(video_id: str):
+    """Test video download with verbose output"""
+    import io
+    import sys
+
+    result = {
+        "video_id": video_id,
+        "success": False,
+        "error": None,
+        "yt_dlp_output": None
+    }
+
+    # Capture yt-dlp output
+    with tempfile.TemporaryDirectory() as tmpdir:
+        video_path = os.path.join(tmpdir, "test.mp4")
+
+        # Get opts with verbose mode
+        opts = get_ydl_opts(video_path)
+        opts['quiet'] = False
+        opts['verbose'] = True
+        opts['no_warnings'] = False
+
+        # Capture output
+        output_buffer = io.StringIO()
+
+        class MyLogger:
+            def debug(self, msg):
+                output_buffer.write(f"[debug] {msg}\n")
+            def info(self, msg):
+                output_buffer.write(f"[info] {msg}\n")
+            def warning(self, msg):
+                output_buffer.write(f"[warning] {msg}\n")
+            def error(self, msg):
+                output_buffer.write(f"[error] {msg}\n")
+
+        opts['logger'] = MyLogger()
+
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                # Just extract info, don't download
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+                result["success"] = True
+                result["title"] = info.get("title", "Unknown")
+                result["formats_count"] = len(info.get("formats", []))
+        except Exception as e:
+            result["error"] = str(e)
+
+        result["yt_dlp_output"] = output_buffer.getvalue()[-2000:]  # Last 2000 chars
 
     return result
 
