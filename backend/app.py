@@ -38,38 +38,52 @@ jobs = {}
 # PO Token Server URL (for YouTube bot detection bypass)
 POT_SERVER_URL = os.environ.get("POT_SERVER_URL", "")
 
+# Set bgutil plugin environment variable at module level
+if POT_SERVER_URL:
+    os.environ['BGUTIL_POT_HTTP_BASE_URL'] = POT_SERVER_URL
+    print(f"PO Token server configured: {POT_SERVER_URL}")
+
 
 def get_ydl_opts(video_path: str) -> dict:
     """Get yt-dlp options with PO Token support"""
     opts = {
-        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
         'outtmpl': video_path.replace('.mp4', '.%(ext)s'),
         'merge_output_format': 'mp4',
         'quiet': True,
         'no_warnings': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         },
         'socket_timeout': 30,
-        'retries': 3,
+        'retries': 5,
+        'extractor_retries': 3,
     }
 
-    # PO Token Server が設定されている場合
+    opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+
+    # PO Token configuration for web client (bypasses bot detection)
+    # Using bgutil-ytdlp-pot-provider plugin with HTTP server
     if POT_SERVER_URL:
+        # Use web client with PO Token (best compatibility with PO Token)
+        # Fallback to ios/android if web fails
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb'],
+                'player_client': ['web', 'ios', 'android'],
             },
+            # New extractor args format for bgutil-ytdlp-pot-provider v1.0.0+
             'youtubepot-bgutilhttp': {
                 'base_url': POT_SERVER_URL,
             }
         }
+        print(f"Using PO Token with web client: {POT_SERVER_URL}")
     else:
+        # No PO Token server - use ios/android only (no web client)
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'android']
+                'player_client': ['ios', 'android'],
             }
         }
+        print("No PO Token server - using ios/android clients only")
 
     return opts
 
@@ -282,31 +296,41 @@ def transcribe_audio(audio_path: str) -> list:
         return []
 
 
-def find_sentence_boundary(segments: list, target_time: float, direction: str = "before") -> float:
-    """Find the nearest sentence boundary"""
+def find_sentence_boundary(segments: list, target_time: float, direction: str = "before", max_distance: float = 10.0) -> float:
+    """Find the nearest sentence boundary within max_distance seconds
+
+    Args:
+        segments: List of transcript segments
+        target_time: Target time to find boundary near
+        direction: "before" or "after"
+        max_distance: Maximum distance in seconds to search (default 10 seconds)
+    """
     sentence_endings = ["。", "！", "？", "!", "?", ".", "…"]
 
     if direction == "before":
-        # 指定時間より前で、文末で終わるセグメントを探す
+        min_time = target_time - max_distance
+        # 指定時間より前で、文末で終わるセグメントを探す（max_distance以内）
         for seg in reversed(segments):
-            if seg["end"] <= target_time:
+            if seg["end"] <= target_time and seg["end"] >= min_time:
                 if any(seg["text"].endswith(e) for e in sentence_endings):
                     return seg["end"]
-        # 見つからない場合は最も近いセグメント終了時間
+        # 見つからない場合は最も近いセグメント終了時間（max_distance以内）
         for seg in reversed(segments):
-            if seg["end"] <= target_time:
+            if seg["end"] <= target_time and seg["end"] >= min_time:
                 return seg["end"]
     else:
-        # 指定時間より後で、文末で終わるセグメントを探す
+        max_time = target_time + max_distance
+        # 指定時間より後で、文末で終わるセグメントを探す（max_distance以内）
         for seg in segments:
-            if seg["start"] >= target_time:
+            if seg["start"] >= target_time and seg["end"] <= max_time:
                 if any(seg["text"].endswith(e) for e in sentence_endings):
                     return seg["end"]
-        # 見つからない場合は最も近いセグメント終了時間
+        # 見つからない場合は最も近いセグメント終了時間（max_distance以内）
         for seg in segments:
-            if seg["start"] >= target_time:
+            if seg["start"] >= target_time and seg["end"] <= max_time:
                 return seg["end"]
 
+    # max_distance以内に見つからない場合はtarget_timeをそのまま返す
     return target_time
 
 
@@ -374,18 +398,122 @@ JSON形式で回答:
         return {"is_good_hook": True, "reason": f"LLM分析エラー: {str(e)}", "suggested_adjustment": None}
 
 
-def extract_audio(video_path: str, output_path: str):
-    """Extract audio from video"""
+def get_video_duration(video_path: str) -> float:
+    """Get video duration in seconds using ffprobe"""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        video_path
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return float(result.stdout.strip())
+
+
+def extract_audio_chunk(video_path: str, output_path: str, start: float = 0, duration: float = 600):
+    """Extract audio chunk from video
+
+    Args:
+        video_path: Input video path
+        output_path: Output audio path (MP3)
+        start: Start time in seconds
+        duration: Duration in seconds (default 600 = 10 minutes)
+    """
     cmd = [
         "ffmpeg", "-y",
+        "-ss", str(start),
         "-i", video_path,
+        "-t", str(duration),
         "-vn",
-        "-acodec", "pcm_s16le",
+        "-acodec", "libmp3lame",
         "-ar", "16000",
         "-ac", "1",
+        "-b:a", "32k",  # Low bitrate for smaller file size (~2MB per 10min)
         output_path
     ]
     subprocess.run(cmd, capture_output=True, check=True)
+
+
+def transcribe_audio_chunked(video_path: str, tmpdir: str, chunk_duration: int = 600) -> list:
+    """Transcribe full video by processing in chunks
+
+    Args:
+        video_path: Input video path
+        tmpdir: Temporary directory for chunk files
+        chunk_duration: Duration of each chunk in seconds (default 600 = 10 minutes)
+
+    Returns:
+        List of transcript segments with adjusted timestamps
+    """
+    client = get_groq_client()
+    if not client:
+        return []
+
+    # Get total video duration
+    total_duration = get_video_duration(video_path)
+    print(f"Video duration: {total_duration:.1f} seconds")
+
+    all_segments = []
+    chunk_index = 0
+
+    # Process video in chunks
+    for start_time in range(0, int(total_duration), chunk_duration):
+        chunk_path = os.path.join(tmpdir, f"chunk_{chunk_index}.mp3")
+        actual_duration = min(chunk_duration, total_duration - start_time)
+
+        print(f"Processing chunk {chunk_index}: {start_time}s - {start_time + actual_duration}s")
+
+        # Extract audio chunk
+        extract_audio_chunk(video_path, chunk_path, start=start_time, duration=actual_duration)
+
+        # Transcribe chunk
+        try:
+            with open(chunk_path, "rb") as audio_file:
+                transcription = client.audio.transcriptions.create(
+                    file=(f"chunk_{chunk_index}.mp3", audio_file.read()),
+                    model="whisper-large-v3",
+                    response_format="verbose_json",
+                    language="ja"
+                )
+
+            # Extract segments and adjust timestamps
+            raw_segments = None
+            if hasattr(transcription, 'segments'):
+                raw_segments = transcription.segments
+            elif isinstance(transcription, dict) and 'segments' in transcription:
+                raw_segments = transcription['segments']
+
+            if raw_segments:
+                for seg in raw_segments:
+                    if isinstance(seg, dict):
+                        all_segments.append({
+                            "start": seg.get("start", 0) + start_time,  # Adjust timestamp
+                            "end": seg.get("end", 0) + start_time,
+                            "text": seg.get("text", "").strip()
+                        })
+                    else:
+                        all_segments.append({
+                            "start": seg.start + start_time,  # Adjust timestamp
+                            "end": seg.end + start_time,
+                            "text": seg.text.strip() if seg.text else ""
+                        })
+
+        except Exception as e:
+            print(f"Chunk {chunk_index} transcription error: {e}")
+
+        # Clean up chunk file
+        if os.path.exists(chunk_path):
+            os.remove(chunk_path)
+
+        chunk_index += 1
+
+    print(f"Total segments transcribed: {len(all_segments)}")
+    return all_segments
+
+
+def extract_audio(video_path: str, output_path: str):
+    """Extract full audio from video (for backward compatibility)"""
+    extract_audio_chunk(video_path, output_path, start=0, duration=99999)
 
 
 def cut_video(input_path: str, output_path: str, start: float, duration: float):
@@ -436,6 +564,40 @@ def health():
     return {"status": "healthy"}
 
 
+@app.get("/debug/pot")
+def debug_pot():
+    """Debug PO Token server connectivity"""
+    import urllib.request
+    import urllib.error
+
+    result = {
+        "pot_server_url": POT_SERVER_URL,
+        "bgutil_env": os.environ.get("BGUTIL_POT_HTTP_BASE_URL", "not set"),
+        "pot_server_reachable": False,
+        "pot_server_response": None,
+        "error": None
+    }
+
+    if POT_SERVER_URL:
+        try:
+            # Test connectivity to PO Token server
+            req = urllib.request.Request(
+                f"{POT_SERVER_URL}/",
+                method="GET"
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                result["pot_server_reachable"] = True
+                result["pot_server_response"] = response.status
+        except urllib.error.HTTPError as e:
+            result["pot_server_reachable"] = True  # Server responded, just with error
+            result["pot_server_response"] = e.code
+            result["error"] = str(e)
+        except Exception as e:
+            result["error"] = str(e)
+
+    return result
+
+
 @app.post("/analyze")
 def analyze(request: AnalyzeRequest):
     """Analyze YouTube video for peaks"""
@@ -483,34 +645,39 @@ def analyze_peaks_with_llm(segments: list, video_duration: float = None) -> list
     if len(full_transcript) > 8000:
         full_transcript = full_transcript[:8000] + "\n...(省略)"
 
-    prompt = f"""以下はYouTube動画の文字起こしです。視聴者が最も興味を持つであろう「盛り上がりポイント」を5つ以内で特定してください。
+    prompt = f"""以下はYouTube動画（令和の虎など討論・プレゼン番組）の文字起こしです。
+ショート動画の「フック」として使える最高潮の瞬間を3つ以内で特定してください。
 
 【文字起こし】
 {full_transcript}
 
-【盛り上がりポイントの判断基準】
-1. 感情的な反応（驚き、笑い、怒り、感動）
-2. 重要な発表や決定の瞬間
-3. 議論が白熱している部分
-4. 予想外の展開
-5. 印象的なセリフや名言
+【良いフックの条件】
+1. 結論・決定の瞬間（「ALL達成」「NOTHING」「○○万円出します」など）
+2. 感情が爆発する瞬間（怒り、驚き、感動の声）
+3. 印象的な一言（名言、衝撃発言）
+4. 緊張が最高潮に達する瞬間
 
-JSON形式で回答してください:
+【悪いフックの例】
+- 説明や前置きの部分
+- 淡々とした会話
+- 文脈がないと意味が分からない発言
+
+JSON形式で回答:
 {{
     "peaks": [
         {{
-            "start_time": "MM:SS形式",
-            "end_time": "MM:SS形式",
-            "reason": "なぜ盛り上がりポイントなのか",
-            "score": 0.0-1.0の数値（盛り上がり度）
+            "start_time": "MM:SS形式（フックの開始）",
+            "end_time": "MM:SS形式（フックの終了、開始から5-8秒後）",
+            "reason": "このシーンが最高潮である理由（10文字以内）",
+            "score": 0.0-1.0
         }}
     ]
 }}
 
-注意:
-- 必ず有効なJSONで回答してください
-- start_timeとend_timeは文字起こしの時間に基づいてください
-- 各ピークは10-60秒程度の範囲にしてください"""
+重要:
+- start_timeからend_timeは必ず5〜8秒以内にしてください（厳守）
+- 最も盛り上がる「瞬間」のみを特定（前後の文脈は含めない）
+- フックは短く印象的に。長すぎるとNGです"""
 
     try:
         response = client.chat.completions.create(
@@ -538,9 +705,12 @@ JSON形式で回答してください:
                     start_sec = int(start_parts[0]) * 60 + int(start_parts[1])
                     end_sec = int(end_parts[0]) * 60 + int(end_parts[1])
 
-                    # 最低10秒の長さを確保
-                    if end_sec - start_sec < 10:
-                        end_sec = start_sec + 30
+                    # ピーク長を5-8秒に制限（ヒートマップと同様の短さ）
+                    peak_duration = end_sec - start_sec
+                    if peak_duration < 3:
+                        end_sec = start_sec + 5  # 最低5秒
+                    elif peak_duration > 10:
+                        end_sec = start_sec + 8  # 最大8秒
 
                     parsed_peaks.append({
                         "start": start_sec,
@@ -564,7 +734,10 @@ JSON形式で回答してください:
 
 @app.post("/analyze-ai")
 def analyze_with_ai(request: AnalyzeRequest):
-    """Analyze YouTube video using AI (for videos without heatmap)"""
+    """Analyze YouTube video using AI (for videos without heatmap)
+
+    Uses chunked transcription to handle long videos without API size limits.
+    """
     video_id = extract_video_id(request.url)
     if not video_id:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL")
@@ -576,9 +749,9 @@ def analyze_with_ai(request: AnalyzeRequest):
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             video_path = os.path.join(tmpdir, "video.mp4")
-            audio_path = os.path.join(tmpdir, "audio.wav")
 
             # 1. Download video
+            print(f"Downloading video: {video_id}")
             ydl_opts = get_ydl_opts(video_path)
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -590,16 +763,16 @@ def analyze_with_ai(request: AnalyzeRequest):
             if downloaded_files:
                 video_path = downloaded_files[0]
 
-            # 2. Extract audio
-            extract_audio(video_path, audio_path)
-
-            # 3. Transcribe
-            segments = transcribe_audio(audio_path)
+            # 2. Transcribe with chunked processing (handles long videos)
+            print("Starting chunked transcription...")
+            segments = transcribe_audio_chunked(video_path, tmpdir, chunk_duration=600)
 
             if not segments:
                 raise HTTPException(status_code=500, detail="Transcription failed")
 
-            # 4. Analyze with LLM
+            print(f"Transcription complete: {len(segments)} segments")
+
+            # 3. Analyze with LLM
             peaks = analyze_peaks_with_llm(segments)
 
             if not peaks:
@@ -627,6 +800,7 @@ def analyze_with_ai(request: AnalyzeRequest):
     except HTTPException:
         raise
     except Exception as e:
+        print(f"analyze-ai error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -720,12 +894,13 @@ def generate_hook_first(request: HookFirstRequest):
             if downloaded_files:
                 video_path = downloaded_files[0]
 
-            # 2. Extract audio and transcribe
+            # 2. Transcribe with chunked processing (handles long videos)
             jobs[job_id]["step"] = "transcribing"
             jobs[job_id]["progress"] = 30
 
-            extract_audio(video_path, audio_path)
-            segments = transcribe_audio(audio_path)
+            print(f"Starting chunked transcription for hook-first...")
+            segments = transcribe_audio_chunked(video_path, tmpdir, chunk_duration=600)
+            print(f"Transcription complete: {len(segments)} segments")
 
             # 3. Calculate hook-first structure
             jobs[job_id]["step"] = "analyzing"
@@ -736,12 +911,16 @@ def generate_hook_first(request: HookFirstRequest):
             hook_duration = request.hook_duration
             context_duration = request.context_duration
 
+            print(f"Input: peak_start={peak_start}, peak_end={peak_end}, hook_duration={hook_duration}, context_duration={context_duration}")
+
             # フックの開始位置（ピークの少し前から）
             hook_start = max(0, peak_end - hook_duration)
 
             # 文の区切りに合わせる
             hook_start = find_sentence_boundary(segments, hook_start, "before")
             hook_end = find_sentence_boundary(segments, peak_end, "after")
+
+            print(f"After sentence boundary: hook_start={hook_start}, hook_end={hook_end}")
 
             # 実際のフック長を計算
             actual_hook_duration = hook_end - hook_start
@@ -752,6 +931,11 @@ def generate_hook_first(request: HookFirstRequest):
             context_start = max(0, hook_start - context_duration)
             context_start = find_sentence_boundary(segments, context_start, "before")
             context_end = hook_start
+
+            # 出力時間の計算とログ
+            total_duration = (hook_end - hook_start) * 2 + (context_end - context_start)
+            print(f"Structure: hook={hook_start}-{hook_end} ({hook_end-hook_start}s), context={context_start}-{context_end} ({context_end-context_start}s)")
+            print(f"Total duration: {total_duration}s")
 
             # LLMでフック品質を分析
             if request.use_llm:

@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-yt-dlp>=2024.12.0
+yt-dlp>=2025.05.22
 bgutil-ytdlp-pot-provider
 python-multipart
 aiofiles
