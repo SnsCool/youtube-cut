@@ -28,3 +28,4 @@ EXPOSE 8000
 # Using shell form to ensure $PORT is evaluated
 CMD ["sh", "-c", "python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
 
+# Deploy trigger 1769779123
