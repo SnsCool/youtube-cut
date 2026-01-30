@@ -24,3 +24,4 @@ EXPOSE 8000
 # Use PORT from environment (Railway sets this)
 # Using shell form to ensure $PORT is evaluated
 CMD ["sh", "-c", "python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
+
