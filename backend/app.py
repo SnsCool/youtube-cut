@@ -59,7 +59,9 @@ def get_ydl_opts(video_path: str) -> dict:
         'extractor_retries': 3,
     }
 
-    opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+    # Format selection with fallback to format 18 (360p mp4, no PO Token required)
+    # Priority: 720p > 480p > 360p > format 18 (guaranteed to work without PO Token)
+    opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best/18'
 
     # PO Token configuration for web client (bypasses bot detection)
     # Using bgutil-ytdlp-pot-provider plugin with HTTP server
@@ -77,13 +79,14 @@ def get_ydl_opts(video_path: str) -> dict:
         }
         print(f"Using PO Token with web client: {POT_SERVER_URL}")
     else:
-        # No PO Token server - use ios/android only (no web client)
+        # No PO Token server - use default client (uses format 18 as fallback)
+        # Format 18 is a progressive format that doesn't require PO Token
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['ios', 'android'],
+                'player_client': ['default'],
             }
         }
-        print("No PO Token server - using ios/android clients only")
+        print("No PO Token server - using default client with format 18 fallback")
 
     return opts
 
