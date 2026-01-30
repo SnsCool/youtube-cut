@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Cache bust - v3
+ARG CACHEBUST=3
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
