@@ -111,7 +111,18 @@
       "Bash(gh run list:*)",
       "Bash(# Try using gh to search for videos or use the channel ID # The channel ID is UCTyKZzmKi95wxmCg9rU-j6Q # Let me try fetching from the channel curl -s \"\"https://www.youtube.com/@reiwanotora/videos\"\")",
       "WebFetch(domain:vercel.com)",
-      "Bash(gh run view:*)"
+      "Bash(gh run view:*)",
+      "Bash(__NEW_LINE_39be8b9292211912__ echo \"Checking health...\")",
+      "Bash(__NEW_LINE_39be8b9292211912__ echo \"Checking logs...\")",
+      "Bash(__NEW_LINE_f607aaa515b2e659__ echo \"=== Health Check ===\")",
+      "Bash(__NEW_LINE_f607aaa515b2e659__ echo \"=== Recent Logs ===\")",
+      "Bash(__NEW_LINE_63dee0c75aacdfa8__ echo \"=== Health Check ===\")",
+      "Bash(__NEW_LINE_63dee0c75aacdfa8__ echo \"=== Logs ===\")",
+      "Bash(__NEW_LINE_b8c86619aff99738__ echo \"=== Health Check ===\")",
+      "Bash(__NEW_LINE_b8c86619aff99738__ echo \"=== Logs ===\")",
+      "Bash(__NEW_LINE_1863b59c9b0db010__ railway up --service 84b80d7f-7829-4533-826d-8525b8d92420 -d)",
+      "Bash(git remote set-url:*)",
+      "Bash(npx vercel --prod)"
     ]
   }
 }

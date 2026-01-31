@@ -119,6 +119,7 @@ class HookFirstRequest(BaseModel):
     context_duration: float = 40.0
     max_total_duration: float = 60.0
     use_llm: bool = True
+    add_transition: bool = False  # AI分析時にトランジションテロップを追加
 
 
 class AnalyzeRequest(BaseModel):
@@ -554,6 +555,53 @@ def concatenate_videos(video_paths: list, output_path: str):
         subprocess.run(cmd, capture_output=True, check=True)
     finally:
         os.unlink(list_file)
+
+
+def create_transition_clip(source_video: str, output_path: str, seconds_back: int, duration: float = 1.5):
+    """Create a transition clip with "◀ 〇〇秒前..." text overlay
+
+    Args:
+        source_video: Source video to extract last frame from
+        output_path: Output path for transition clip
+        seconds_back: Number of seconds to show in the text
+        duration: Duration of the transition clip in seconds
+    """
+    # テキスト設定
+    text = f"◀ {seconds_back}秒前..."
+
+    # ffmpegでソース動画の最後のフレームを取得し、テキストオーバーレイを追加
+    # フォントはシステムのデフォルトを使用
+    cmd = [
+        "ffmpeg", "-y",
+        "-sseof", "-0.1",  # 動画の最後から0.1秒前
+        "-i", source_video,
+        "-vframes", "1",
+        "-vf", f"drawtext=text='{text}':fontsize=48:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2",
+        "-loop", "1",
+        "-t", str(duration),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-an",  # 音声なし
+        "-preset", "fast",
+        output_path
+    ]
+
+    try:
+        subprocess.run(cmd, capture_output=True, check=True)
+    except subprocess.CalledProcessError:
+        # フォールバック: テキストなしで黒画面を生成
+        cmd_fallback = [
+            "ffmpeg", "-y",
+            "-f", "lavfi",
+            "-i", f"color=c=black:s=1080x1920:d={duration}",
+            "-vf", f"drawtext=text='{text}':fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-an",
+            "-preset", "fast",
+            output_path
+        ]
+        subprocess.run(cmd_fallback, capture_output=True, check=True)
 
 
 @app.get("/")
@@ -1097,14 +1145,21 @@ def generate_hook_first(request: HookFirstRequest):
             # Climax部分（フックの再生）を切り出し
             cut_video(video_path, climax_path, hook_start, hook_end - hook_start)
 
-            # 5. Concatenate: Hook -> Context -> Climax
+            # 5. Concatenate: Hook -> (Transition) -> Context -> Climax
             jobs[job_id]["step"] = "concatenating"
             jobs[job_id]["progress"] = 90
 
             output_filename = f"hookfirst_{video_id}_{job_id}.mp4"
             output_path = OUTPUT_DIR / output_filename
 
-            concatenate_videos([hook_path, context_path, climax_path], str(output_path))
+            # トランジション追加（AI分析時のみ）
+            if request.add_transition:
+                transition_path = os.path.join(tmpdir, "transition.mp4")
+                seconds_back = int(hook_start - context_start)
+                create_transition_clip(hook_path, transition_path, seconds_back)
+                concatenate_videos([hook_path, transition_path, context_path, climax_path], str(output_path))
+            else:
+                concatenate_videos([hook_path, context_path, climax_path], str(output_path))
 
             jobs[job_id]["status"] = "completed"
             jobs[job_id]["progress"] = 100
