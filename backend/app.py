@@ -115,9 +115,9 @@ class HookFirstRequest(BaseModel):
     url: str
     peak_start: float
     peak_end: float
-    hook_duration: float = 5.0
-    context_duration: float = 40.0
-    max_total_duration: float = 60.0
+    hook_duration: float = 7.0  # フックは多少長くてOK
+    context_duration: float = 50.0  # 経緯も柔軟に
+    max_total_duration: float = 70.0  # 全体で1分10秒まで
     use_llm: bool = True
     add_transition: bool = False  # AI分析時にトランジションテロップを追加
 
@@ -1159,32 +1159,49 @@ def generate_hook_first(request: HookFirstRequest):
             hook_duration = request.hook_duration
             context_duration = request.context_duration
 
-            print(f"Input: peak_start={peak_start}, peak_end={peak_end}, hook_duration={hook_duration}, context_duration={context_duration}")
+            max_total = request.max_total_duration  # 70秒
+            print(f"Input: peak_start={peak_start}, peak_end={peak_end}, hook_duration={hook_duration}, context_duration={context_duration}, max_total={max_total}")
 
-            # フックの開始位置（ピークの少し前から）
-            hook_start = max(0, peak_end - hook_duration)
+            # ステップ1: フックの範囲を文の区切りで決定（自然な切れ目を優先）
+            # フック開始は文頭から、終了は文末まで
+            hook_start_target = max(0, peak_end - hook_duration)
+            hook_start = find_sentence_start(segments, hook_start_target, max_distance=15.0)
+            hook_end = find_sentence_boundary(segments, peak_end, "after", max_distance=15.0)
 
-            # 文の区切りに合わせる（フック開始は文頭、終了は文末）
-            hook_start = find_sentence_start(segments, hook_start)
-            hook_end = find_sentence_boundary(segments, peak_end, "after")
-
-            print(f"After sentence boundary: hook_start={hook_start}, hook_end={hook_end}")
-
-            # 実際のフック長を計算
+            # フックが短すぎる場合は調整
             actual_hook_duration = hook_end - hook_start
-            if actual_hook_duration < 2:
-                hook_end = hook_start + hook_duration
+            if actual_hook_duration < 3:
+                # もう少し前から始める
+                hook_start = find_sentence_start(segments, hook_start - 3, max_distance=15.0)
+                actual_hook_duration = hook_end - hook_start
 
-            # コンテキストの開始位置（フックの前）- 文頭から始める
-            context_start = max(0, hook_start - context_duration)
-            context_start = find_sentence_start(segments, context_start)
-            # 経緯の終了はフック開始位置（自然に繋がるように）
-            context_end = hook_start
+            print(f"Hook after sentence boundary: {hook_start:.1f}-{hook_end:.1f} ({actual_hook_duration:.1f}s)")
 
-            # 出力時間の計算とログ
-            total_duration = (hook_end - hook_start) * 2 + (context_end - context_start)
-            print(f"Structure: hook={hook_start}-{hook_end} ({hook_end-hook_start}s), context={context_start}-{context_end} ({context_end-context_start}s)")
-            print(f"Total duration: {total_duration}s")
+            # ステップ2: 経緯の範囲を決定（文の区切りを優先）
+            context_end = hook_start  # 経緯はフック開始位置で終わる
+            context_start_target = max(0, hook_start - context_duration)
+            context_start = find_sentence_start(segments, context_start_target, max_distance=15.0)
+
+            # ステップ3: 全体時間をチェックし、70秒を超える場合は経緯を短くする
+            # 構成: フック + 経緯 + クライマックス（フック再生）+ トランジション(約1.5秒)
+            transition_duration = 1.5 if request.add_transition else 0
+            total_duration = actual_hook_duration * 2 + (context_end - context_start) + transition_duration
+
+            # 70秒を超える場合、経緯の開始を後ろにずらす
+            attempts = 0
+            while total_duration > max_total and attempts < 5:
+                # 経緯を5秒短くする（文の区切りを探す）
+                context_start_target = context_start + 5
+                new_context_start = find_sentence_start(segments, context_start_target, max_distance=10.0)
+                if new_context_start >= context_end - 10:  # 経緯が短すぎにならないように
+                    break
+                context_start = new_context_start
+                total_duration = actual_hook_duration * 2 + (context_end - context_start) + transition_duration
+                attempts += 1
+                print(f"Adjusting context: new_start={context_start:.1f}, total={total_duration:.1f}s")
+
+            print(f"Final structure: hook={hook_start:.1f}-{hook_end:.1f} ({actual_hook_duration:.1f}s), context={context_start:.1f}-{context_end:.1f} ({context_end-context_start:.1f}s)")
+            print(f"Total duration: {total_duration:.1f}s (max: {max_total}s)")
 
             # LLMでフック品質を分析
             if request.use_llm:

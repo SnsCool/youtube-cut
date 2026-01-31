@@ -346,8 +346,9 @@
                         url: videoUrl,
                         peak_start: start,
                         peak_end: end,
-                        hook_duration: 5.0,
-                        context_duration: 40.0,
+                        hook_duration: 7.0,  // フックは多少長くてOK
+                        context_duration: 50.0,  // 経緯も柔軟に
+                        max_total_duration: 70.0,  // 全体1分10秒まで
                         use_llm: true,
                         add_transition: addTransition  // AI分析時のみトランジションテロップ追加
                     })
