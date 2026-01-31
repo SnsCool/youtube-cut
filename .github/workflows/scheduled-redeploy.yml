@@ -1,0 +1,34 @@
+name: Scheduled Redeploy
+
+on:
+  # Run every Sunday at 00:00 UTC (Monday 09:00 JST)
+  schedule:
+    - cron: '0 0 * * 0'
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Railway CLI
+        run: |
+          curl -fsSL https://railway.com/install.sh | sh
+
+      - name: Redeploy Backend Service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway redeploy --service aae092c3-0565-466b-ac4d-998422817f0c --yes
+
+      - name: Notify Success
+        if: success()
+        run: |
+          echo "Successfully triggered redeploy for youtube-cut backend"
+          echo "New packages will be installed if available"
+
+      - name: Notify Failure
+        if: failure()
+        run: |
+          echo "Failed to trigger redeploy"
+          exit 1
