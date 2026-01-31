@@ -4,6 +4,6 @@ dockerfilePath = "Dockerfile"
 watchPatterns = ["**/*"]
 
 [deploy]
-startCommand = "python app.py"
+# Removed startCommand to use Dockerfile's CMD which properly installs dependencies
 healthcheckPath = "/health"
 healthcheckTimeout = 120
