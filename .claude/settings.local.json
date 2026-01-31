@@ -96,7 +96,22 @@
       "Bash(pip3 install:*)",
       "Bash(git revert:*)",
       "Bash(git fetch:*)",
-      "Bash(pip3 show:*)"
+      "Bash(pip3 show:*)",
+      "Bash(gh auth:*)",
+      "Bash(security find-generic-password:*)",
+      "Bash(env)",
+      "Bash(defaults read:*)",
+      "Bash(security dump-keychain:*)",
+      "Bash(security find-internet-password:*)",
+      "Bash(security list-keychains:*)",
+      "Bash(RAILWAY_DEBUG=1 railway whoami:*)",
+      "Bash(dscl:*)",
+      "Bash(gh secret set:*)",
+      "Bash(gh workflow run:*)",
+      "Bash(gh run list:*)",
+      "Bash(# Try using gh to search for videos or use the channel ID # The channel ID is UCTyKZzmKi95wxmCg9rU-j6Q # Let me try fetching from the channel curl -s \"\"https://www.youtube.com/@reiwanotora/videos\"\")",
+      "WebFetch(domain:vercel.com)",
+      "Bash(gh run view:*)"
     ]
   }
 }
