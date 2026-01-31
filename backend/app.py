@@ -337,6 +337,32 @@ def find_sentence_boundary(segments: list, target_time: float, direction: str = 
     return target_time
 
 
+def find_sentence_start(segments: list, target_time: float, max_distance: float = 10.0) -> float:
+    """Find the nearest sentence start (after a sentence ending) before target_time
+
+    Args:
+        segments: List of transcript segments
+        target_time: Target time to find sentence start near
+        max_distance: Maximum distance in seconds to search
+    """
+    sentence_endings = ["。", "！", "？", "!", "?", ".", "…"]
+    min_time = target_time - max_distance
+
+    # target_timeより前の文末を見つけ、その次のセグメント開始位置を返す
+    for i, seg in enumerate(segments):
+        if seg["end"] <= target_time and seg["end"] >= min_time:
+            if any(seg["text"].endswith(e) for e in sentence_endings):
+                # この文末の直後（次のセグメントの開始）が文頭
+                if i + 1 < len(segments):
+                    next_start = segments[i + 1]["start"]
+                    if next_start <= target_time:
+                        return next_start
+                return seg["end"]
+
+    # 見つからない場合はtarget_timeをそのまま返す
+    return target_time
+
+
 def get_text_in_range(segments: list, start: float, end: float) -> str:
     """Get transcript text within a time range"""
     texts = []
@@ -1099,8 +1125,8 @@ def generate_hook_first(request: HookFirstRequest):
             # フックの開始位置（ピークの少し前から）
             hook_start = max(0, peak_end - hook_duration)
 
-            # 文の区切りに合わせる
-            hook_start = find_sentence_boundary(segments, hook_start, "before")
+            # 文の区切りに合わせる（フック開始は文頭、終了は文末）
+            hook_start = find_sentence_start(segments, hook_start)
             hook_end = find_sentence_boundary(segments, peak_end, "after")
 
             print(f"After sentence boundary: hook_start={hook_start}, hook_end={hook_end}")
@@ -1110,9 +1136,10 @@ def generate_hook_first(request: HookFirstRequest):
             if actual_hook_duration < 2:
                 hook_end = hook_start + hook_duration
 
-            # コンテキストの開始位置（フックの前）
+            # コンテキストの開始位置（フックの前）- 文頭から始める
             context_start = max(0, hook_start - context_duration)
-            context_start = find_sentence_boundary(segments, context_start, "before")
+            context_start = find_sentence_start(segments, context_start)
+            # 経緯の終了はフック開始位置（自然に繋がるように）
             context_end = hook_start
 
             # 出力時間の計算とログ
