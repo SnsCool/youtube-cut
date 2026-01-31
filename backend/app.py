@@ -583,44 +583,83 @@ def concatenate_videos(video_paths: list, output_path: str):
         os.unlink(list_file)
 
 
-def create_transition_clip(source_video: str, output_path: str, seconds_back: int, duration: float = 1.5):
-    """Create a transition clip with "◀ 〇〇秒前..." text overlay
+def create_transition_clip(source_video: str, output_path: str, seconds_back: int, tmpdir: str):
+    """Create a dramatic transition clip with freeze + flash + text
+
+    構成:
+    1. フリーズフレーム (0.3秒) - フックの最後で一時停止
+    2. 白フラッシュ (0.15秒) - 場面転換を強調
+    3. テキスト表示 (1.0秒) - "◀ 〇〇秒前..." を大きく表示
 
     Args:
         source_video: Source video to extract last frame from
         output_path: Output path for transition clip
         seconds_back: Number of seconds to show in the text
-        duration: Duration of the transition clip in seconds
+        tmpdir: Temporary directory for intermediate files
     """
-    # テキスト設定
     text = f"◀ {seconds_back}秒前..."
 
-    # ffmpegでソース動画の最後のフレームを取得し、テキストオーバーレイを追加
-    # フォントはシステムのデフォルトを使用
-    cmd = [
+    freeze_path = os.path.join(tmpdir, "freeze.mp4")
+    flash_path = os.path.join(tmpdir, "flash.mp4")
+    text_path = os.path.join(tmpdir, "text.mp4")
+
+    # 1. フリーズフレーム (0.3秒) - 最後のフレームを静止
+    cmd_freeze = [
         "ffmpeg", "-y",
-        "-sseof", "-0.1",  # 動画の最後から0.1秒前
+        "-sseof", "-0.1",
         "-i", source_video,
         "-vframes", "1",
-        "-vf", f"drawtext=text='{text}':fontsize=48:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2",
+        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
         "-loop", "1",
-        "-t", str(duration),
+        "-t", "0.3",
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
-        "-an",  # 音声なし
+        "-an",
         "-preset", "fast",
-        output_path
+        freeze_path
+    ]
+
+    # 2. 白フラッシュ (0.15秒)
+    cmd_flash = [
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-i", "color=c=white:s=1080x1920:d=0.15",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-an",
+        "-preset", "fast",
+        flash_path
+    ]
+
+    # 3. テキスト表示 (1.0秒) - 大きなテキストで目立たせる
+    cmd_text = [
+        "ffmpeg", "-y",
+        "-f", "lavfi",
+        "-i", "color=c=black:s=1080x1920:d=1.0",
+        "-vf", f"drawtext=text='{text}':fontsize=72:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-an",
+        "-preset", "fast",
+        text_path
     ]
 
     try:
-        subprocess.run(cmd, capture_output=True, check=True)
-    except subprocess.CalledProcessError:
-        # フォールバック: テキストなしで黒画面を生成
+        # 各パーツを生成
+        subprocess.run(cmd_freeze, capture_output=True, check=True)
+        subprocess.run(cmd_flash, capture_output=True, check=True)
+        subprocess.run(cmd_text, capture_output=True, check=True)
+
+        # 結合: フリーズ → フラッシュ → テキスト
+        concatenate_videos([freeze_path, flash_path, text_path], output_path)
+
+    except subprocess.CalledProcessError as e:
+        # フォールバック: シンプルな黒画面+テキスト
         cmd_fallback = [
             "ffmpeg", "-y",
             "-f", "lavfi",
-            "-i", f"color=c=black:s=1080x1920:d={duration}",
-            "-vf", f"drawtext=text='{text}':fontsize=48:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2",
+            "-i", "color=c=black:s=1080x1920:d=1.5",
+            "-vf", f"drawtext=text='{text}':fontsize=72:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-an",
@@ -1183,7 +1222,7 @@ def generate_hook_first(request: HookFirstRequest):
             if request.add_transition:
                 transition_path = os.path.join(tmpdir, "transition.mp4")
                 seconds_back = int(hook_start - context_start)
-                create_transition_clip(hook_path, transition_path, seconds_back)
+                create_transition_clip(hook_path, transition_path, seconds_back, tmpdir)
                 concatenate_videos([hook_path, transition_path, context_path, climax_path], str(output_path))
             else:
                 concatenate_videos([hook_path, context_path, climax_path], str(output_path))
