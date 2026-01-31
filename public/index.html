@@ -258,7 +258,11 @@
                 let analysisSource = 'heatmap';
 
                 // ヒートマップがない場合はAI分析にフォールバック
-                if (data.detail && data.detail.includes('No heatmap')) {
+                const noHeatmapError =
+                    (data.detail && (data.detail.includes('No heatmap') || data.detail.includes('Heatmap'))) ||
+                    (data.error && (data.error.includes('Heatmap') || data.error.includes('heatmap')));
+
+                if (noHeatmapError) {
                     result.innerHTML = '<div class="loading"><div class="spinner"></div><p>ヒートマップなし... AI分析中（1-2分かかります）</p></div>';
 
                     response = await fetch(BACKEND_URL + '/analyze-ai', {
