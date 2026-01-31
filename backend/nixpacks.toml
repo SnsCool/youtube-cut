@@ -5,4 +5,4 @@ nixPkgs = ["python311", "ffmpeg"]
 cmds = ["pip install -r requirements.txt"]
 
 [start]
-cmd = "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"
+cmd = "python app.py"
