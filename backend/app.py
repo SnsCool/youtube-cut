@@ -59,31 +59,33 @@ def get_ydl_opts(video_path: str) -> dict:
         'extractor_retries': 3,
     }
 
-    opts['format'] = 'bestvideo[height<=720]+bestaudio/best[height<=720]/best'
+    # Format selection - use format 18 (360p mp4) as primary since it doesn't require GVS PO Token
+    # Higher quality formats require GVS PO Token which bgutil may not fully support yet
+    opts['format'] = '18/best[height<=480]/best'
 
-    # PO Token configuration for web client (bypasses bot detection)
+    # PO Token configuration
     # Using bgutil-ytdlp-pot-provider plugin with HTTP server
     if POT_SERVER_URL:
-        # Use web client with PO Token (best compatibility with PO Token)
-        # Fallback to ios/android if web fails
+        # Use default client which uses tv+web_safari combination internally
+        # with PO Token from bgutil provider
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['web', 'ios', 'android'],
+                'player_client': ['default'],
             },
             # New extractor args format for bgutil-ytdlp-pot-provider v1.0.0+
             'youtubepot-bgutilhttp': {
-                'base_url': POT_SERVER_URL,
+                'base_url': [POT_SERVER_URL],
             }
         }
-        print(f"Using PO Token with web client: {POT_SERVER_URL}")
+        print(f"Using PO Token with default client: {POT_SERVER_URL}")
     else:
-        # No PO Token server - use ios/android only (no web client)
+        # No PO Token server - use default client
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['ios', 'android'],
+                'player_client': ['default'],
             }
         }
-        print("No PO Token server - using ios/android clients only")
+        print("No PO Token server - using default client")
 
     return opts
 
@@ -680,7 +682,8 @@ def debug_test_download(video_id: str):
         "video_id": video_id,
         "success": False,
         "error": None,
-        "yt_dlp_output": None
+        "yt_dlp_output": None,
+        "pot_server_url": POT_SERVER_URL
     }
 
     # Capture yt-dlp output
@@ -708,6 +711,9 @@ def debug_test_download(video_id: str):
 
         opts['logger'] = MyLogger()
 
+        # Log the extractor_args being used
+        result["extractor_args"] = opts.get('extractor_args', {})
+
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 # Just extract info, don't download
@@ -715,10 +721,14 @@ def debug_test_download(video_id: str):
                 result["success"] = True
                 result["title"] = info.get("title", "Unknown")
                 result["formats_count"] = len(info.get("formats", []))
+                # Check available format heights
+                formats = info.get("formats", [])
+                heights = list(set([f.get("height") for f in formats if f.get("height")]))
+                result["available_heights"] = sorted(heights, reverse=True)
         except Exception as e:
             result["error"] = str(e)
 
-        result["yt_dlp_output"] = output_buffer.getvalue()[-2000:]  # Last 2000 chars
+        result["yt_dlp_output"] = output_buffer.getvalue()[-3000:]  # Last 3000 chars
 
     return result
 
