@@ -1162,6 +1162,16 @@ async def cleanup_old_files():
 
 
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.environ.get("PORT", 8000))
+
+    # Install dependencies at runtime if missing
+    try:
+        import uvicorn
+    except ImportError:
+        print("Installing uvicorn...")
+        import subprocess
+        subprocess.check_call(["pip", "install", "uvicorn[standard]", "fastapi", "python-multipart", "aiofiles", "httpx", "groq"])
+        import uvicorn
+
+    print(f"Starting server on port {port}...")
     uvicorn.run(app, host="0.0.0.0", port=port)
