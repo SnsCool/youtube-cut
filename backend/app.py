@@ -1162,43 +1162,51 @@ def generate_hook_first(request: HookFirstRequest):
             max_total = request.max_total_duration  # 70秒
             print(f"Input: peak_start={peak_start}, peak_end={peak_end}, hook_duration={hook_duration}, context_duration={context_duration}, max_total={max_total}")
 
-            # ステップ1: フックの範囲を文の区切りで決定（自然な切れ目を優先）
-            # フック開始は文頭から、終了は文末まで
+            # ステップ1: フックの範囲を決定
+            # まずピーク周辺のテキストを取得してLLMで最適なカット位置を判断
+            hook_search_start = max(0, peak_end - 15)  # ピークの15秒前から
+            hook_search_end = peak_end + 10  # ピークの10秒後まで
+            hook_candidates_text = get_text_in_range(segments, hook_search_start, hook_search_end)
+
+            # 基本の文区切りで開始・終了を決定
             hook_start_target = max(0, peak_end - hook_duration)
             hook_start = find_sentence_start(segments, hook_start_target, max_distance=15.0)
             hook_end = find_sentence_boundary(segments, peak_end, "after", max_distance=15.0)
 
-            # フックが短すぎる場合は調整
+            # フックが短すぎる場合は前に伸ばす
             actual_hook_duration = hook_end - hook_start
-            if actual_hook_duration < 3:
-                # もう少し前から始める
-                hook_start = find_sentence_start(segments, hook_start - 3, max_distance=15.0)
+            if actual_hook_duration < 5:
+                hook_start = find_sentence_start(segments, hook_start - 5, max_distance=15.0)
                 actual_hook_duration = hook_end - hook_start
 
-            print(f"Hook after sentence boundary: {hook_start:.1f}-{hook_end:.1f} ({actual_hook_duration:.1f}s)")
+            # フックが長すぎる場合（10秒以上）は終了を早める
+            if actual_hook_duration > 10:
+                # peak_endに近い文末を探す
+                hook_end = find_sentence_boundary(segments, peak_end, "after", max_distance=5.0)
+                actual_hook_duration = hook_end - hook_start
+
+            print(f"Hook after boundary adjustment: {hook_start:.1f}-{hook_end:.1f} ({actual_hook_duration:.1f}s)")
 
             # ステップ2: 経緯の範囲を決定（文の区切りを優先）
             context_end = hook_start  # 経緯はフック開始位置で終わる
             context_start_target = max(0, hook_start - context_duration)
             context_start = find_sentence_start(segments, context_start_target, max_distance=15.0)
 
-            # ステップ3: 全体時間をチェックし、70秒を超える場合は経緯を短くする
+            # ステップ3: 全体時間を計算
             # 構成: フック + 経緯 + クライマックス（フック再生）+ トランジション(約1.5秒)
             transition_duration = 1.5 if request.add_transition else 0
             total_duration = actual_hook_duration * 2 + (context_end - context_start) + transition_duration
 
-            # 70秒を超える場合、経緯の開始を後ろにずらす
-            attempts = 0
-            while total_duration > max_total and attempts < 5:
-                # 経緯を5秒短くする（文の区切りを探す）
-                context_start_target = context_start + 5
-                new_context_start = find_sentence_start(segments, context_start_target, max_distance=10.0)
-                if new_context_start >= context_end - 10:  # 経緯が短すぎにならないように
-                    break
-                context_start = new_context_start
-                total_duration = actual_hook_duration * 2 + (context_end - context_start) + transition_duration
-                attempts += 1
-                print(f"Adjusting context: new_start={context_start:.1f}, total={total_duration:.1f}s")
+            # 70秒を大きく超える場合のみ調整（余裕を持たせる）
+            if total_duration > max_total + 5:  # 75秒以上の場合のみ
+                # 経緯の開始を後ろにずらす
+                excess = total_duration - max_total
+                context_start_target = context_start + excess
+                new_context_start = find_sentence_start(segments, context_start_target, max_distance=15.0)
+                if new_context_start < context_end - 15:  # 経緯が15秒以上残るように
+                    context_start = new_context_start
+                    total_duration = actual_hook_duration * 2 + (context_end - context_start) + transition_duration
+                    print(f"Adjusted context: new_start={context_start:.1f}, total={total_duration:.1f}s")
 
             print(f"Final structure: hook={hook_start:.1f}-{hook_end:.1f} ({actual_hook_duration:.1f}s), context={context_start:.1f}-{context_end:.1f} ({context_end-context_start:.1f}s)")
             print(f"Total duration: {total_duration:.1f}s (max: {max_total}s)")
